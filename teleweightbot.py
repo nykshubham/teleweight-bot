@@ -10,12 +10,15 @@ from telegram.ext import (
 )
 
 # --- CONFIG ---
-TOKEN = "6525065683:AAHbSg6-PhRA3obWwzRjfw-en1AclYpiq7g"
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or "6525065683:AAHbSg6-PhRA3obWwzRjfw-en1AclYpiq7g"
+if not TOKEN:
+    raise ValueError("❌ TELEGRAM_BOT_TOKEN is not set. Set it in Render environment variables.")
+
 PLAN_FILE = "plan.json"
 WEIGHT_LOG_FILE = "weights.json"
 MAX_WEEKLY_LOSS = 2.5
 
-# --- YOUR FIXED DATA ---
+# --- FIXED USER DATA ---
 USER_AGE = 25
 USER_HEIGHT = 171
 USER_ACTIVITY = 1.2
@@ -100,10 +103,8 @@ async def log_weight(update: Update, context: ContextTypes.DEFAULT_TYPE):
     days_total = int(weeks * 7)
     days_left = max(days_total - days_passed, 0)
 
-    # Determine direction (gain or loss)
     goal_type = "gain" if target_weight > plan['current_weight'] else "loss"
 
-    # Store weight log
     weights = []
     if os.path.exists(WEIGHT_LOG_FILE):
         with open(WEIGHT_LOG_FILE, "r") as f:
@@ -114,7 +115,6 @@ async def log_weight(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with open(WEIGHT_LOG_FILE, "w") as f:
         json.dump(weights, f)
 
-    # --- Direction-aware progress ---
     if goal_type == "loss":
         remaining = max(weight - target_weight, 0)
         progress_condition = weight <= target_weight
@@ -140,7 +140,6 @@ async def log_weight(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if milestone_achieved:
         msg += milestone_msg
 
-    # 🏆 Celebration if goal reached (loss or gain)
     if progress_condition:
         msg += (
             "🏆🥳 AMAZING! You've reached your target weight!\n"
@@ -169,7 +168,9 @@ async def main():
     application.add_handler(conv)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, log_weight))
 
-    # --- Webhook server setup ---
+    # --- Create web server ---
+    web_app = web.Application()
+
     async def webhook(request):
         try:
             data = await request.json()
@@ -180,14 +181,13 @@ async def main():
             print("❌ Webhook error:", e)
             return web.Response(status=500, text=str(e))
 
-    # ✅ Create the web app here
-    web_app = web.Application()
     async def healthcheck(request):
-    return web.Response(text="✅ Bot is alive")
-    web_app.router.add_post("/webhook", webhook)
+        return web.Response(text="✅ Bot is alive")
 
-    # ✅ Use your actual Render URL here
-    webhook_url = "https://teleweight-bot.onrender.com/webhook"
+    web_app.router.add_post("/webhook", webhook)
+    web_app.router.add_get("/", healthcheck)
+
+    webhook_url = "https://teleweight-bot.onrender.com/webhook"  # ✅ Replace with your actual Render URL
     await application.bot.set_webhook(url=webhook_url)
 
     runner = web.AppRunner(web_app)
@@ -195,7 +195,7 @@ async def main():
     site = web.TCPSite(runner, "0.0.0.0", int(os.environ.get("PORT", 8080)))
     await site.start()
 
-    print("🌐 Webhook server is live on Render...")
+    print("🌐 Webhook server is live and listening...")
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
