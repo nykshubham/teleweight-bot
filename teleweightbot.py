@@ -169,8 +169,9 @@ async def main():
     application.add_handler(conv)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, log_weight))
 
-    # Initialize application for webhook processing
+    # 👇 THIS is the crucial fix
     await application.initialize()
+    await application.start()
 
     # --- Create web server ---
     web_app = web.Application()
