@@ -10,7 +10,7 @@ from telegram.ext import (
 )
 
 # --- CONFIG ---
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TOKEN = "6525065683:AAHbSg6-PhRA3obWwzRjfw-en1AclYpiq7g"
 PLAN_FILE = "plan.json"
 WEIGHT_LOG_FILE = "weights.json"
 MAX_WEEKLY_LOSS = 2.5
@@ -182,6 +182,8 @@ async def main():
 
     # ✅ Create the web app here
     web_app = web.Application()
+    async def healthcheck(request):
+    return web.Response(text="✅ Bot is alive")
     web_app.router.add_post("/webhook", webhook)
 
     # ✅ Use your actual Render URL here
