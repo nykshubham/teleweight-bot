@@ -173,13 +173,15 @@ async def main():
 
     # --- Webhook server setup ---
     async def webhook(request):
-        data = await request.json()
-        update = Update.de_json(data, app.bot)
-        await app.process_update(update)
-        return web.Response()
+        try:
+            data = await request.json()
+            update = Update.de_json(data, application.bot)
+            await application.process_update(update)
+            return web.Response(text="ok")
+        except Exception as e:
+            print("❌ Webhook error:", e)
+            return web.Response(status=500, text=str(e))
 
-    web_app = web.Application()
-    web_app.router.add_post("/webhook", webhook)
 
     # Replace with your actual Render URL
     webhook_url = "https://YOUR-APP-NAME.onrender.com/webhook"
