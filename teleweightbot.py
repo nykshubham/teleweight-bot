@@ -2,6 +2,7 @@ import os
 import json
 import datetime
 import asyncio
+import traceback
 from aiohttp import web
 from telegram import Update
 from telegram.ext import (
@@ -16,7 +17,7 @@ if not TOKEN:
 
 PLAN_FILE = "plan.json"
 WEIGHT_LOG_FILE = "weights.json"
-MAX_WEEKLY_LOSS = 2.5
+MAX_WEEKLY_LOSS = 2.5  # kg/week
 
 # --- FIXED USER DATA ---
 USER_AGE = 25
@@ -179,7 +180,8 @@ async def main():
             return web.Response(text="ok")
         except Exception as e:
             print("❌ Webhook error:", e)
-            return web.Response(status=500, text=str(e))
+            print(traceback.format_exc())
+            return web.Response(status=500, text=f"Error: {e}")
 
     async def healthcheck(request):
         return web.Response(text="✅ Bot is alive")
@@ -187,7 +189,7 @@ async def main():
     web_app.router.add_post("/webhook", webhook)
     web_app.router.add_get("/", healthcheck)
 
-    webhook_url = "https://teleweight-bot.onrender.com/webhook"  # ✅ Replace with your actual Render URL
+    webhook_url = "https://teleweight-bot.onrender.com/webhook"  # ✅ Replace with your Render URL
     await application.bot.set_webhook(url=webhook_url)
 
     runner = web.AppRunner(web_app)
