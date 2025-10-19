@@ -114,8 +114,6 @@ async def log_weight(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with open(WEIGHT_LOG_FILE, "w") as f:
         json.dump(weights, f)
 
-    diff = weight - previous_weight
-
     # --- Direction-aware progress ---
     if goal_type == "loss":
         remaining = max(weight - target_weight, 0)
@@ -156,7 +154,7 @@ async def log_weight(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ------------------ MAIN (Webhook Server) ------------------
 
 async def main():
-    app = ApplicationBuilder().token(TOKEN).build()
+    application = ApplicationBuilder().token(TOKEN).build()
 
     conv = ConversationHandler(
         entry_points=[CommandHandler("plan", plan_start)],
@@ -168,8 +166,8 @@ async def main():
         fallbacks=[]
     )
 
-    app.add_handler(conv)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, log_weight))
+    application.add_handler(conv)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, log_weight))
 
     # --- Webhook server setup ---
     async def webhook(request):
@@ -182,10 +180,13 @@ async def main():
             print("❌ Webhook error:", e)
             return web.Response(status=500, text=str(e))
 
+    # ✅ Create the web app here
+    web_app = web.Application()
+    web_app.router.add_post("/webhook", webhook)
 
-    # Replace with your actual Render URL
-    webhook_url = "https://YOUR-APP-NAME.onrender.com/webhook"
-    await app.bot.set_webhook(url=webhook_url)
+    # ✅ Use your actual Render URL here
+    webhook_url = "https://teleweight-bot.onrender.com/webhook"
+    await application.bot.set_webhook(url=webhook_url)
 
     runner = web.AppRunner(web_app)
     await runner.setup()
