@@ -1,6 +1,8 @@
+import os
 import json
 import datetime
-import os
+import asyncio
+from aiohttp import web
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -9,17 +11,20 @@ from telegram.ext import (
 
 # --- CONFIG ---
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+PLAN_FILE = "plan.json"
+WEIGHT_LOG_FILE = "weights.json"
+MAX_WEEKLY_LOSS = 2.5
+
 # --- YOUR FIXED DATA ---
 USER_AGE = 25
 USER_HEIGHT = 171
-USER_ACTIVITY = 1.2   # 1.2 sedentary, 1.375 light, 1.55 moderate, etc.
+USER_ACTIVITY = 1.2
 USER_GENDER = "male"
-PLAN_FILE = "plan.json"
-WEIGHT_LOG_FILE = "weights.json"
-MAX_WEEKLY_LOSS = 2.5  # kg/week
 
-#Convo starts
+# Conversation states
 CURRENT_WEIGHT, TARGET_WEIGHT, WEEKS = range(3)
+
+# ------------------ PLAN FLOW ------------------
 
 async def plan_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("What's your current weight (kg)?")
@@ -72,20 +77,9 @@ async def plan_weeks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Plan saved!\n🎯 Target: {target_weight} kg\n⏱️ Timeline: {weeks} weeks\n📆 Starting today!\n📈 Goal: {goal_type} weight"
     )
     return ConversationHandler.END
-    # Save plan
-    with open(PLAN_FILE, "w") as f:
-        json.dump(context.user_data, f)
-
-    # Reset weight log for new plan
-    with open(WEIGHT_LOG_FILE, "w") as wf:
-        json.dump([current_weight], wf)
-
-    await update.message.reply_text(
-        f"✅ Plan saved!\n🎯 Target: {target_weight} kg\n⏱️ Timeline: {weeks} weeks\n📆 Starting today!"
-    )
-    return ConversationHandler.END
 
 # ------------------ WEIGHT LOGGING ------------------
+
 async def log_weight(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         weight = float(update.message.text)
@@ -159,10 +153,9 @@ async def log_weight(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(msg)
 
+# ------------------ MAIN (Webhook Server) ------------------
 
-# ------------------ BOT SETUP ------------------
-
-def main():
+async def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     conv = ConversationHandler(
@@ -178,8 +171,27 @@ def main():
     app.add_handler(conv)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, log_weight))
 
-    print("🤖 Bot is running... Press Ctrl+C to stop.")
-    app.run_polling()
+    # --- Webhook server setup ---
+    async def webhook(request):
+        data = await request.json()
+        update = Update.de_json(data, app.bot)
+        await app.process_update(update)
+        return web.Response()
+
+    web_app = web.Application()
+    web_app.router.add_post("/webhook", webhook)
+
+    # Replace with your actual Render URL
+    webhook_url = "https://YOUR-APP-NAME.onrender.com/webhook"
+    await app.bot.set_webhook(url=webhook_url)
+
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", int(os.environ.get("PORT", 8080)))
+    await site.start()
+
+    print("🌐 Webhook server is live on Render...")
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
