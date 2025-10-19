@@ -169,20 +169,23 @@ async def main():
     application.add_handler(conv)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, log_weight))
 
+    # Initialize application for webhook processing
+    await application.initialize()
+
     # --- Create web server ---
     web_app = web.Application()
-    
+
     async def webhook(request):
         try:
             data = await request.json()
+            print("📩 Incoming update:", data)
             if not data:
                 return web.Response(text="empty update")
-                print("📩 Incoming update:", data)  # 👈 debug log
-            
+
             update = Update.de_json(data, application.bot)
             await application.process_update(update)
             return web.Response(text="ok")
-        
+
         except Exception as e:
             print("❌ Webhook error:", e)
             print(traceback.format_exc())
@@ -194,7 +197,7 @@ async def main():
     web_app.router.add_post("/webhook", webhook)
     web_app.router.add_get("/", healthcheck)
 
-    webhook_url = "https://teleweight-bot.onrender.com/webhook"  # ✅ Replace with your Render URL
+    webhook_url = "https://teleweight-bot.onrender.com/webhook"
     await application.bot.set_webhook(url=webhook_url)
 
     runner = web.AppRunner(web_app)
