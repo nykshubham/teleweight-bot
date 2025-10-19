@@ -171,13 +171,18 @@ async def main():
 
     # --- Create web server ---
     web_app = web.Application()
-
+    
     async def webhook(request):
         try:
             data = await request.json()
+            if not data:
+                return web.Response(text="empty update")
+                print("📩 Incoming update:", data)  # 👈 debug log
+            
             update = Update.de_json(data, application.bot)
             await application.process_update(update)
             return web.Response(text="ok")
+        
         except Exception as e:
             print("❌ Webhook error:", e)
             print(traceback.format_exc())
