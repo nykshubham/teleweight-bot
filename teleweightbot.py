@@ -28,6 +28,35 @@ USER_GENDER = "male"
 # Conversation states
 CURRENT_WEIGHT, TARGET_WEIGHT, WEEKS = range(3)
 
+# ------------------ ASYNC FILE HELPERS ------------------
+
+async def read_json(filename, default=None):
+    """Async JSON read to avoid blocking"""
+    try:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _read_json_sync, filename, default)
+    except Exception as e:
+        print(f"Error reading {filename}: {e}")
+        return default
+
+def _read_json_sync(filename, default):
+    if not os.path.exists(filename):
+        return default
+    with open(filename, "r") as f:
+        return json.load(f)
+
+async def write_json(filename, data):
+    """Async JSON write to avoid blocking"""
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _write_json_sync, filename, data)
+    except Exception as e:
+        print(f"Error writing {filename}: {e}")
+
+def _write_json_sync(filename, data):
+    with open(filename, "w") as f:
+        json.dump(data, f)
+
 # ------------------ PLAN FLOW ------------------
 
 async def plan_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -35,17 +64,30 @@ async def plan_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return CURRENT_WEIGHT
 
 async def plan_current(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['current_weight'] = float(update.message.text)
-    await update.message.reply_text("What's your target weight (kg)?")
-    return TARGET_WEIGHT
+    try:
+        context.user_data['current_weight'] = float(update.message.text)
+        await update.message.reply_text("What's your target weight (kg)?")
+        return TARGET_WEIGHT
+    except ValueError:
+        await update.message.reply_text("Please enter a valid number.")
+        return CURRENT_WEIGHT
 
 async def plan_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['target_weight'] = float(update.message.text)
-    await update.message.reply_text("In how many weeks do you want to achieve it?")
-    return WEEKS
+    try:
+        context.user_data['target_weight'] = float(update.message.text)
+        await update.message.reply_text("In how many weeks do you want to achieve it?")
+        return WEEKS
+    except ValueError:
+        await update.message.reply_text("Please enter a valid number.")
+        return TARGET_WEIGHT
 
 async def plan_weeks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['weeks'] = float(update.message.text)
+    try:
+        context.user_data['weeks'] = float(update.message.text)
+    except ValueError:
+        await update.message.reply_text("Please enter a valid number.")
+        return WEEKS
+
     context.user_data['age'] = USER_AGE
     context.user_data['height'] = USER_HEIGHT
     context.user_data['activity_level'] = USER_ACTIVITY
@@ -69,11 +111,8 @@ async def plan_weeks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ConversationHandler.END
 
-    with open(PLAN_FILE, "w") as f:
-        json.dump(context.user_data, f)
-
-    with open(WEIGHT_LOG_FILE, "w") as wf:
-        json.dump([current_weight], wf)
+    await write_json(PLAN_FILE, context.user_data)
+    await write_json(WEIGHT_LOG_FILE, [current_weight])
 
     goal_type = "gain" if target_weight > current_weight else "lose"
 
@@ -90,12 +129,10 @@ async def log_weight(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         return
 
-    if not os.path.exists(PLAN_FILE):
+    plan = await read_json(PLAN_FILE)
+    if not plan:
         await update.message.reply_text("You need to set a plan first using /plan")
         return
-
-    with open(PLAN_FILE, "r") as f:
-        plan = json.load(f)
 
     target_weight = plan['target_weight']
     weeks = plan['weeks']
@@ -106,15 +143,10 @@ async def log_weight(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     goal_type = "gain" if target_weight > plan['current_weight'] else "loss"
 
-    weights = []
-    if os.path.exists(WEIGHT_LOG_FILE):
-        with open(WEIGHT_LOG_FILE, "r") as f:
-            weights = json.load(f)
-
+    weights = await read_json(WEIGHT_LOG_FILE, [])
     previous_weight = weights[-1] if weights else weight
     weights.append(weight)
-    with open(WEIGHT_LOG_FILE, "w") as f:
-        json.dump(weights, f)
+    await write_json(WEIGHT_LOG_FILE, weights)
 
     if goal_type == "loss":
         remaining = max(weight - target_weight, 0)
@@ -146,8 +178,9 @@ async def log_weight(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🏆🥳 AMAZING! You've reached your target weight!\n"
             "🎯 Time to set a new goal with /plan 💪"
         )
-        if os.path.exists(WEIGHT_LOG_FILE):
-            os.remove(WEIGHT_LOG_FILE)
+        # Async file deletion
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, lambda: os.path.exists(WEIGHT_LOG_FILE) and os.remove(WEIGHT_LOG_FILE))
 
     await update.message.reply_text(msg)
 
@@ -159,9 +192,9 @@ async def main():
     conv = ConversationHandler(
         entry_points=[CommandHandler("plan", plan_start)],
         states={
-            CURRENT_WEIGHT: [MessageHandler(filters.TEXT, plan_current)],
-            TARGET_WEIGHT: [MessageHandler(filters.TEXT, plan_target)],
-            WEEKS: [MessageHandler(filters.TEXT, plan_weeks)],
+            CURRENT_WEIGHT: [MessageHandler(filters.TEXT & ~filters.COMMAND, plan_current)],
+            TARGET_WEIGHT: [MessageHandler(filters.TEXT & ~filters.COMMAND, plan_target)],
+            WEEKS: [MessageHandler(filters.TEXT & ~filters.COMMAND, plan_weeks)],
         },
         fallbacks=[]
     )
@@ -169,7 +202,6 @@ async def main():
     application.add_handler(conv)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, log_weight))
 
-    # 👇 THIS is the crucial fix
     await application.initialize()
     await application.start()
 
@@ -177,20 +209,45 @@ async def main():
     web_app = web.Application()
 
     async def webhook(request):
+        """
+        CRITICAL: Respond to Telegram immediately, then process update asynchronously
+        """
         try:
             data = await request.json()
-            print("📩 Incoming update:", data)
+            print("📩 Incoming update")
+            
             if not data:
-                return web.Response(text="empty update")
+                return web.Response(text="ok")
 
+            # Parse the update
             update = Update.de_json(data, application.bot)
-            await application.process_update(update)
-            return web.Response(text="ok")
+            
+            # Respond immediately to Telegram (avoid timeout)
+            response = web.Response(text="ok")
+            
+            # Process update asynchronously in background
+            asyncio.create_task(safe_process_update(application, update))
+            
+            return response
 
         except Exception as e:
             print("❌ Webhook error:", e)
             print(traceback.format_exc())
-            return web.Response(status=500, text=f"Error: {e}")
+            # Still return 200 to avoid Telegram retries
+            return web.Response(text="ok")
+
+    async def safe_process_update(app, update):
+        """Process update with timeout protection"""
+        try:
+            await asyncio.wait_for(
+                app.process_update(update),
+                timeout=50.0  # Internal timeout (less than Telegram's 60s)
+            )
+        except asyncio.TimeoutError:
+            print("⏱️ Update processing timed out")
+        except Exception as e:
+            print(f"❌ Error processing update: {e}")
+            print(traceback.format_exc())
 
     async def healthcheck(request):
         return web.Response(text="✅ Bot is alive")
@@ -199,6 +256,7 @@ async def main():
     web_app.router.add_get("/", healthcheck)
 
     webhook_url = "https://teleweight-bot.onrender.com/webhook"
+    print(f"🔗 Setting webhook to: {webhook_url}")
     await application.bot.set_webhook(url=webhook_url)
 
     runner = web.AppRunner(web_app)
